@@ -54,8 +54,8 @@ ifeq ($(ARCH),x86_64)
 	MMNAME	= mmx64
 	FBNAME	= fbx64
 	SHIMNAME= shimx64
-	EFI_PATH:=/usr/lib64/gnuefi
-	LIB_PATH:=/usr/lib64
+	EFI_PATH:=/usr/lib
+	LIB_PATH:=/usr/lib
 
 endif
 ifeq ($(ARCH),ia32)
@@ -185,8 +185,8 @@ endif
 		-j .note.gnu.build-id \
 		$(FORMAT) $^ $@.debug
 
-%.efi.signed: %.efi certdb/secmod.db
-	pesign -n certdb -i $< -c "shim" -s -o $@ -f
+%.efi.signed: %.efi shim.crt
+	sbsign --key shim.key --cert shim.crt $<
 
 clean:
 	$(MAKE) -C Cryptlib clean
