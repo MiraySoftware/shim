@@ -112,7 +112,7 @@ EFI_STATUS tpm_log_event(EFI_PHYSICAL_ADDRESS buf, UINTN size, UINT8 pcr,
 		event->Header.PCRIndex = pcr;
 		event->Header.EventType = 0x0d;
 		event->Size = sizeof(*event) - sizeof(event->Event) + strlen(description) + 1;
-		memcpy(event->Event, description, strlen(description) + 1);
+		memcpy(event->Event, (void*)description, strlen(description) + 1);
 		status = uefi_call_wrapper(tpm2->hash_log_extend_event, 5, tpm2,
 					   0, buf, (UINT64) size, event);
 		FreePool(event);
