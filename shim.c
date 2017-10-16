@@ -33,8 +33,31 @@
  * Corporation.
  */
 
+#include <efi.h>
+#include <efilib.h>
+#include <Library/BaseCryptLib.h>
+#include "PeImage.h"
 #include "shim.h"
+#include "netboot.h"
+#include "httpboot.h"
+#include "replacements.h"
+#include "tpm.h"
+#include "ucs2.h"
 
+#include "guid.h"
+#include "variables.h"
+#include "efiauthenticated.h"
+#include "security_policy.h"
+#include "console.h"
+#include "version.h"
+
+#ifdef ENABLE_SHIM_CERT
+#include "shim_cert.h"
+#endif
+
+#include <stdarg.h>
+
+#include <Library/BaseCryptLib.h>
 #include <openssl/err.h>
 #include <openssl/bn.h>
 #include <openssl/dh.h>
@@ -47,8 +70,6 @@
 #include <openssl/x509v3.h>
 #include <openssl/rsa.h>
 #include <openssl/dso.h>
-
-#include <Library/BaseCryptLib.h>
 
 #define FALLBACK L"\\fb" EFI_ARCH L".efi"
 #define MOK_MANAGER L"\\mm" EFI_ARCH L".efi"
@@ -68,7 +89,6 @@ static UINT8 in_protocol;
 		UINTN __perror_ret = 0;					\
 		if (!in_protocol)					\
 			__perror_ret = Print((fmt), ##__VA_ARGS__);	\
-		LogError(fmt, ##__VA_ARGS__);				\
 		__perror_ret;						\
 	})
 
@@ -446,7 +466,9 @@ static CHECK_STATUS check_db_cert_in_ram(EFI_SIGNATURE_LIST *CertList,
 			Cert = (EFI_SIGNATURE_DATA *) ((UINT8 *) CertList + sizeof (EFI_SIGNATURE_LIST) + CertList->SignatureHeaderSize);
 			CertSize = CertList->SignatureSize - sizeof(EFI_GUID);
 			if (verify_x509(Cert->SignatureData, CertSize)) {
+				drain_openssl_errors();
 				if (verify_eku(Cert->SignatureData, CertSize)) {
+					drain_openssl_errors();
 					IsFound = AuthenticodeVerify (data->CertData,
 								      data->Hdr.dwLength - sizeof(data->Hdr),
 								      Cert->SignatureData,
@@ -455,14 +477,12 @@ static CHECK_STATUS check_db_cert_in_ram(EFI_SIGNATURE_LIST *CertList,
 					if (IsFound) {
 						tpm_measure_variable(dbname, guid, CertSize, Cert->SignatureData);
 						return DATA_FOUND;
-						drain_openssl_errors();
-					} else {
-						LogError(L"AuthenticodeVerify(): %d\n", IsFound);
 					}
 				}
 			} else if (verbose) {
 				console_notify(L"Not a DER encoding x.509 Certificate");
 			}
+			drain_openssl_errors();
 		}
 
 		dbsize -= CertList->SignatureListSize;
@@ -578,50 +598,36 @@ static EFI_STATUS check_blacklist (WIN_CERTIFICATE_EFI_PKCS *cert,
 	if (check_db_hash_in_ram(dbx, vendor_dbx_size, sha256hash,
 				 SHA256_DIGEST_SIZE, EFI_CERT_SHA256_GUID,
 				 L"dbx", secure_var) ==
-				DATA_FOUND) {
-		LogError(L"binary sha256hash found in vendor dbx\n");
+				DATA_FOUND)
 		return EFI_SECURITY_VIOLATION;
-	}
 	if (check_db_hash_in_ram(dbx, vendor_dbx_size, sha1hash,
 				 SHA1_DIGEST_SIZE, EFI_CERT_SHA1_GUID,
 				 L"dbx", secure_var) ==
-				DATA_FOUND) {
-		LogError(L"binary sha1hash found in vendor dbx\n");
+				DATA_FOUND)
 		return EFI_SECURITY_VIOLATION;
-	}
 	if (cert && check_db_cert_in_ram(dbx, vendor_dbx_size, cert,
 					 sha256hash, L"dbx",
-					 secure_var) == DATA_FOUND) {
-		LogError(L"cert sha256hash found in vendor dbx\n");
+					 secure_var) == DATA_FOUND)
 		return EFI_SECURITY_VIOLATION;
-	}
+
 	if (check_db_hash(L"dbx", secure_var, sha256hash, SHA256_DIGEST_SIZE,
-			  EFI_CERT_SHA256_GUID) == DATA_FOUND) {
-		LogError(L"binary sha256hash found in system dbx\n");
+			  EFI_CERT_SHA256_GUID) == DATA_FOUND)
 		return EFI_SECURITY_VIOLATION;
-	}
 	if (check_db_hash(L"dbx", secure_var, sha1hash, SHA1_DIGEST_SIZE,
-			  EFI_CERT_SHA1_GUID) == DATA_FOUND) {
-		LogError(L"binary sha1hash found in system dbx\n");
+			  EFI_CERT_SHA1_GUID) == DATA_FOUND)
 		return EFI_SECURITY_VIOLATION;
-	}
 	if (cert && check_db_cert(L"dbx", secure_var, cert, sha256hash) ==
-				DATA_FOUND) {
-		LogError(L"cert sha256hash found in system dbx\n");
+				DATA_FOUND)
 		return EFI_SECURITY_VIOLATION;
-	}
 	if (check_db_hash(L"MokListX", shim_var, sha256hash, SHA256_DIGEST_SIZE,
 			  EFI_CERT_SHA256_GUID) == DATA_FOUND) {
-		LogError(L"binary sha256hash found in Mok dbx\n");
 		return EFI_SECURITY_VIOLATION;
 	}
 	if (cert && check_db_cert(L"MokListX", shim_var, cert, sha256hash) ==
 				DATA_FOUND) {
-		LogError(L"cert sha256hash found in Mok dbx\n");
 		return EFI_SECURITY_VIOLATION;
 	}
 
-	drain_openssl_errors();
 	return EFI_SUCCESS;
 }
 
@@ -645,24 +651,18 @@ static EFI_STATUS check_whitelist (WIN_CERTIFICATE_EFI_PKCS *cert,
 					EFI_CERT_SHA256_GUID) == DATA_FOUND) {
 			update_verification_method(VERIFIED_BY_HASH);
 			return EFI_SUCCESS;
-		} else {
-			LogError(L"check_db_hash(db, sha256hash) != DATA_FOUND\n");
 		}
 		if (check_db_hash(L"db", secure_var, sha1hash, SHA1_DIGEST_SIZE,
 					EFI_CERT_SHA1_GUID) == DATA_FOUND) {
 			verification_method = VERIFIED_BY_HASH;
 			update_verification_method(VERIFIED_BY_HASH);
 			return EFI_SUCCESS;
-		} else {
-			LogError(L"check_db_hash(db, sha1hash) != DATA_FOUND\n");
 		}
 		if (cert && check_db_cert(L"db", secure_var, cert, sha256hash)
 					== DATA_FOUND) {
 			verification_method = VERIFIED_BY_CERT;
 			update_verification_method(VERIFIED_BY_CERT);
 			return EFI_SUCCESS;
-		} else {
-			LogError(L"check_db_cert(db, sha256hash) != DATA_FOUND\n");
 		}
 	}
 
@@ -671,19 +671,16 @@ static EFI_STATUS check_whitelist (WIN_CERTIFICATE_EFI_PKCS *cert,
 		verification_method = VERIFIED_BY_HASH;
 		update_verification_method(VERIFIED_BY_HASH);
 		return EFI_SUCCESS;
-	} else {
-		LogError(L"check_db_hash(MokList, sha256hash) != DATA_FOUND\n");
 	}
 	if (cert && check_db_cert(L"MokList", shim_var, cert, sha256hash) ==
 				DATA_FOUND) {
 		verification_method = VERIFIED_BY_CERT;
 		update_verification_method(VERIFIED_BY_CERT);
 		return EFI_SUCCESS;
-	} else {
-		LogError(L"check_db_cert(MokList, sha256hash) != DATA_FOUND\n");
 	}
 
 	update_verification_method(VERIFIED_BY_NOTHING);
+	crypterr(EFI_SECURITY_VIOLATION);
 	return EFI_SECURITY_VIOLATION;
 }
 
@@ -1061,19 +1058,15 @@ static EFI_STATUS verify_buffer (char *data, int datasize,
 	drain_openssl_errors();
 
 	status = generate_hash(data, datasize, context, sha256hash, sha1hash);
-	if (status != EFI_SUCCESS) {
-		LogError(L"generate_hash: %r\n", status);
+	if (status != EFI_SUCCESS)
 		return status;
-	}
 
 	/*
 	 * Check that the MOK database hasn't been modified
 	 */
 	status = verify_mok();
-	if (status != EFI_SUCCESS) {
-		LogError(L"verify_mok: %r\n", status);
+	if (status != EFI_SUCCESS)
 		return status;
-	}
 
 	/*
 	 * Ensure that the binary isn't blacklisted
@@ -1081,7 +1074,6 @@ static EFI_STATUS verify_buffer (char *data, int datasize,
 	status = check_blacklist(cert, sha256hash, sha1hash);
 	if (status != EFI_SUCCESS) {
 		perror(L"Binary is blacklisted\n");
-		LogError(L"Binary is blacklisted: %r\n", status);
 		return status;
 	}
 
@@ -1090,12 +1082,8 @@ static EFI_STATUS verify_buffer (char *data, int datasize,
 	 * databases
 	 */
 	status = check_whitelist(cert, sha256hash, sha1hash);
-	if (status == EFI_SUCCESS) {
-		drain_openssl_errors();
+	if (status == EFI_SUCCESS)
 		return status;
-	} else {
-		LogError(L"check_whitelist(): %r\n", status);
-	}
 
 	if (cert) {
 #if defined(ENABLE_SHIM_CERT)
@@ -1110,10 +1098,7 @@ static EFI_STATUS verify_buffer (char *data, int datasize,
 			update_verification_method(VERIFIED_BY_CERT);
 			tpm_measure_variable(L"Shim", shim_var, sizeof(shim_cert), shim_cert);
 			status = EFI_SUCCESS;
-			drain_openssl_errors();
 			return status;
-		} else {
-			LogError(L"AuthenticodeVerify(shim_cert) failed\n");
 		}
 #endif /* defined(ENABLE_SHIM_CERT) */
 
@@ -1128,16 +1113,10 @@ static EFI_STATUS verify_buffer (char *data, int datasize,
 			update_verification_method(VERIFIED_BY_CERT);
 			tpm_measure_variable(L"Shim", shim_var, vendor_cert_size, vendor_cert);
 			status = EFI_SUCCESS;
-			drain_openssl_errors();
 			return status;
-		} else {
-			LogError(L"AuthenticodeVerify(vendor_cert) failed\n");
 		}
 	}
 
-	LogError(L"Binary is not whitelisted\n");
-	crypterr(EFI_SECURITY_VIOLATION);
-	PrintErrors();
 	status = EFI_SECURITY_VIOLATION;
 	return status;
 }
@@ -1921,8 +1900,6 @@ EFI_STATUS start_image(EFI_HANDLE image_handle, CHAR16 *ImagePath)
 
 		if (efi_status != EFI_SUCCESS) {
 			perror(L"Failed to load image %s: %r\n", PathName, efi_status);
-			PrintErrors();
-			ClearErrors();
 			goto done;
 		}
 	}
@@ -1940,8 +1917,6 @@ EFI_STATUS start_image(EFI_HANDLE image_handle, CHAR16 *ImagePath)
 
 	if (efi_status != EFI_SUCCESS) {
 		perror(L"Failed to load image: %r\n", efi_status);
-		PrintErrors();
-		ClearErrors();
 		CopyMem(li, &li_bak, sizeof(li_bak));
 		goto done;
 	}
