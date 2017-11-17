@@ -88,7 +88,7 @@ endif
 
 LDFLAGS		= --hash-style=sysv -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_PATH) -L$(LIB_PATH) -LCryptlib -LCryptlib/OpenSSL $(EFI_CRT_OBJS) --build-id=sha1
 
-TARGET	= $(SHIMNAME).efi $(MMNAME).efi.signed $(FBNAME).efi.signed
+TARGET	= $(SHIMNAME).efi
 OBJS	= shim.o netboot.o cert.o replacements.o tpm.o version.o
 KEYS	= shim_cert.h ocsp.* ca.* shim.crt shim.csr shim.p12 shim.pem shim.key shim.cer
 SOURCES	= shim.c shim.h netboot.c include/PeImage.h include/wincert.h include/console.h replacements.c replacements.h tpm.c tpm.h version.c version.h
@@ -126,7 +126,7 @@ certdb/secmod.db: shim.crt
 	pk12util -d certdb/ -i shim.p12 -W "" -K ""
 	certutil -d certdb/ -A -i shim.crt -n shim -t u
 
-shim.o: $(SOURCES) shim_cert.h
+shim.o: $(SOURCES)
 shim.o: $(wildcard *.h)
 
 cert.o : cert.S
