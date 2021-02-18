@@ -40,7 +40,7 @@ MOK_OBJS = MokManager.o PasswordCrypt.o crypt_blowfish.o errlog.o sbat_data.o
 ORIG_MOK_SOURCES = MokManager.c PasswordCrypt.c crypt_blowfish.c shim.h $(wildcard include/*.h)
 FALLBACK_OBJS = fallback.o tpm.o errlog.o sbat_data.o
 ORIG_FALLBACK_SRCS = fallback.c
-SBATPATH = data/sbat.csv
+SBATPATH = $(TOPDIR)/data/sbat.csv
 
 ifeq ($(SOURCE_DATE_EPOCH),)
 	UNAME=$(shell uname -s -m -p -i -o)
