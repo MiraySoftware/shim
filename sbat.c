@@ -262,7 +262,7 @@ parse_sbat_var(list_t *entries)
 	UINT8 *data = 0;
 	UINTN datasize, i;
 	EFI_STATUS efi_status;
-	char delim;
+	char delim = 0;
 
 	if (!entries)
 		return EFI_INVALID_PARAMETER;
