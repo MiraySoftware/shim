@@ -1,6 +1,8 @@
 TARGET = lib.a
 
-LIBFILES = $(notdir $(foreach x,$(wildcard $(TOPDIR)/lib/*.c),$(patsubst %.c,%.o,$(x))))
+LIBFILES_UNSORTED = $(notdir $(foreach x,$(wildcard $(TOPDIR)/lib/*.c),$(patsubst %.c,%.o,$(x))))
+LIBFILES = $(sort $(LIBFILES_UNSORTED))
+
 
 EFI_INCLUDES    = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(ARCH) -I$(EFI_INCLUDE)/protocol -I$(TOPDIR)/../include \
 		  -I$(TOPDIR)/CryptLib/Include/openssl/
